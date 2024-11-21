@@ -1,0 +1,173 @@
+---
+title: "Connecticut Lake Profile Data"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: no
+    css: style.css
+params:
+  location: Killingly Pond
+---
+<div class = "section">
+
+[![](header_logo.png)](https://portal.ct.gov/deep/water/inland-water-monitoring/water-quality-monitoring-program)
+
+```{r setup, include=FALSE}
+
+library(knitr)
+library(leaflet)
+library(leaflet.extras)
+library(sf)
+library(dplyr)
+library(stringr)
+
+#set at beginning of file
+location <- params$location
+locationf <- paste0(location, "_") #some names partially match other names
+
+#where all plots for all lakes live
+plot_path <- "P:/R/lakeprofilermd/reports/plots"
+all_files <- list.files(plot_path, full.names = TRUE)
+
+#filter files based on the r param location
+location_files <- all_files[grepl(locationf, all_files)]
+
+#get station IDs for results header
+station_ids <- unique(sub(paste0(".*_(\\d{5})_.*.png"), "\\1", basename(location_files)))
+
+#extract dates from the filenames for the individual tabs
+dates <- unique(str_extract(location_files, paste0(locationf, "\\d+_(\\d{4}-\\d{2}-\\d{2})_")) %>%
+                  str_extract("\\d{4}-\\d{2}-\\d{2}")) #date substring
+
+# number of days we have been there
+samplingdays <- length(dates)
+                       
+#date info
+dates_d <- as.Date(dates)
+firstdate <- min(dates_d)
+lastdate <- max(dates_d)
+
+#spatial info for blurb
+locationinfo <- read.csv("locationinfo_f.csv")
+locationinfo <- locationinfo %>%
+  filter(MonitoringLocationName == location)
+acres <- locationinfo$acres
+town <- locationinfo$TOWN
+county <- locationinfo$COUNTY
+depth <- locationinfo$maxD
+f_location <- locationinfo$FormattedName
+
+stations <- read.csv("https://www.waterqualitydata.us/data/Station/search?organization=CT_DEP01_WQX&project=lakesABM&project=lakesNLA&mimeType=csv&zip=no&providers=NWIS&providers=STORET")
+
+#formatting
+stations$WQPID <- stations$MonitoringLocationIdentifier
+stations$MonitoringLocationIdentifier <- gsub(".*-", "", stations$MonitoringLocationIdentifier)
+stations$MonitoringLocationName <- gsub("\\(|\\)", "", stations$MonitoringLocationName) 
+stations$MonitoringLocationName <- gsub("/", "-", stations$MonitoringLocationName) 
+stations$MonitoringLocationName <- gsub('"', "", stations$MonitoringLocationName) 
+
+
+#crystal lake nonsense
+crystal_site <- c("18154", "20764")
+c_stations <- stations %>% #only the results we want to keep at those times and locations
+  filter(
+    MonitoringLocationIdentifier %in% crystal_site)
+c_stations$MonitoringLocationName <- paste(c_stations$MonitoringLocationName, c_stations$MonitoringLocationIdentifier, sep = " " )
+c_stations$MonitoringLocationName <- gsub("18154", "Ellington", c_stations$MonitoringLocationName)
+c_stations$MonitoringLocationName <- gsub("20764", "Winchester", c_stations$MonitoringLocationName)
+stations <- stations %>% 
+  filter(
+    !(MonitoringLocationIdentifier %in% crystal_site)
+  ) #remove the crystal lake rows
+stations <- rbind(stations, c_stations) #add the new ones in
+
+#other params for content
+site <- subset(stations, stations$MonitoringLocationName == location) #for map
+WQPIDs <- unique(site$WQPID) #for WQP URL
+WQPIDs <- paste0("&siteid=", WQPIDs)
+WQPIDs <- paste(WQPIDs, collapse = "")
+
+```
+
+# `r f_location` Report
+<hr>
+
+<i>Report Last Updated: `r format(Sys.Date(), '%B %Y')`</i>
+
+<b>`r f_location`</b> is a <b>`r acres` acre</b> lake, located in the town of <b>`r town`</b> within <b>`r county` County</b>, Connecticut. The max measured depth of this lake is <b>`r depth` meters</b>. It has been sampled by CT DEEP Water Monitoring and Assessment on <b>`r samplingdays`</b> sampling day(s) between <b>`r firstdate`</b> and <b>`r lastdate`</b>.
+
+The <a href ="https://portal.ct.gov/deep/water/inland-water-monitoring/water-quality-monitoring-program">DEEP Water Monitoring Program</a> conducts ambient monitoring and the <a href = "https://portal.ct.gov/deep/water/water-quality/water-quality-305b-report-to-congress">related assessments</a> of the State’s waters, including Connecticut's many <a href = "https://portal.ct.gov/deep/water/inland-water-monitoring/lake-water-quality-monitoring">lakes and ponds</a>.  In Connecticut, there are a total of 2,267 lakes and ponds greater than 10 acres in size. 
+
+The Monitoring Program conducts annual monitoring on approximately 10-20 of these lakes and ponds per year.  The type and locations of monitoring during a given year is determined by a variety of factors, including participation in regional and national studies, as well as support requests from groups within DEEP.
+
+## Monitoring Location(s)
+<hr>
+```{r map, echo=FALSE}
+
+sViewLon <- mean(site$LongitudeMeasure) #accounts for multiple points
+sViewLat <- mean(site$LatitudeMeasure)
+
+CT <- read_sf(dsn = ".", layer = "cb_2022_us_state_500k")
+CT <- subset(CT, CT$STUSPS == "CT")
+CT <- st_transform(CT, crs = 4326)
+
+leaflet(data = site, options = leafletOptions(minZoom = 8, maxZoom = 18)) %>%
+  setView(lng = sViewLon, lat = sViewLat, zoom = 14) %>%
+  addTiles(group = 'Open Street Map') %>%
+  addProviderTiles("Esri.WorldGrayCanvas", group = "Esri GrayCanvas (default)") %>%
+  addMarkers(~LongitudeMeasure, ~LatitudeMeasure, 
+             label = ~paste(MonitoringLocationName, ": ", MonitoringLocationIdentifier, sep = ""),
+             labelOptions = labelOptions(permanent = FALSE)) %>%
+    addPolylines(data = CT, color = "black", opacity = 1, weight = 1.5) %>%
+    addMiniMap(
+    toggleDisplay = TRUE,  
+    tiles = providers$Esri.WorldGrayCanvas,
+    position = "bottomright",  
+    width = 180,  
+    height = 180,  
+    zoomLevelOffset = -6  
+  ) %>%
+    addLayersControl(
+    baseGroups = c('Esri GrayCanvas (default)', 'Open Street Map'),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
+
+```
+
+## Results
+<hr>
+The below results were collected with a multiparameter probe. The first result is recorded at the surface of the lake, and each subsequent result is recorded one meter deeper. The final result is recorded approximately 0.5 meters from the bottom of the lake.
+
+These results are first grouped according to the monitoring location, and then according to the date they were sampled. Click <a href = "https://www.waterqualitydata.us/data/Result/search?organization=CT_DEP01_WQX&project=lakesABM&project=lakesNLA`r WQPIDs`&mimeType=csv&zip=no&dataProfile=resultPhysChem&providers=NWIS&providers=STORET">here</a> to download the water chemistry profile data associated with these monitoring location(s).
+
+
+```{r results, results='asis', echo=FALSE}
+
+cat("<div class='graph-container'>\n") #organizes into grid
+
+for (station_id in station_ids) {
+  cat("\n### Station ", station_id, " {.tabset}\n\n") #header for the station
+  #filter for current station
+  station_files <- location_files[grepl(station_id, location_files)]
+
+#loop through each date
+  for (date in dates) {
+      #filter files for the current date
+    date_files <- station_files[grepl(date, station_files)]
+    if (length(date_files) > 0) { #no empty date tabs
+      cat("\n#### ", date, "\n\n") 
+  
+  #loop through each file for the current date
+  for (file in date_files) {
+    cat("<img src='", file, "'>", sep = "")
+  }
+    cat("\n") #new line is needed to separate tabs
+  }  
+  cat("\n") #new line to separate each section
+}
+}
+cat("</div>\n")
+```
+</div>
